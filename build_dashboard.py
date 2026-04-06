@@ -217,8 +217,8 @@ def hourly_wr(data, payout, be):
 
 # ── Load & run ────────────────────────────────────────────────────────────────
 CONFIGS = [
-    ('BTC','30s','btcusdt_30s_4d.csv','4 days'),
-    ('ETH','30s','ethusdt_30s_4d.csv','4 days'),
+    ('BTC','30s','btcusdt_30s_2d.csv','2 days'),
+    ('ETH','30s','ethusdt_30s_2d.csv','2 days'),
     ('BTC','1m', 'btcusdt_1m_7d.csv', '7 days'),
     ('ETH','1m', 'ethusdt_1m_7d.csv', '7 days'),
     ('BTC','5m', 'btcusdt_5m_7d.csv', '7 days'),
@@ -800,7 +800,7 @@ FULL_HTML = f"""<!DOCTYPE html>
 <div class="header">
   <div>
     <h1>Turboflow Binary Bet Edge Analysis <span class="badge">LIVE</span></h1>
-    <p>30s 80% payout (BE 55.56%) &bull; 1m 83% (BE 54.64%) &bull; 5m 85% (BE 54.05%) &bull; 10m 80% (BE 55.56%) &bull; BTC + ETH</p>
+    <p>30s 80% payout (2 days) &bull; 1m 83% (7 days) &bull; 5m 85% (7 days) &bull; 10m 80% (7 days) &bull; BTC + ETH</p>
   </div>
   <div style="text-align:right;">
     <button id="refresh-btn" onclick="startRefresh()">&#8635; Refresh Data</button>

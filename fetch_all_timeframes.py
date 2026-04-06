@@ -14,6 +14,9 @@ BASE = 'https://api.binance.com'
 def ms_to_dt(ms):
     return datetime.fromtimestamp(ms/1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
+_session = requests.Session()
+_session.trust_env = False   # bypass system proxy on cloud servers
+
 def fetch_klines(symbol, interval, days, retries=3):
     now_ms   = int(time.time() * 1000)
     start_ms = now_ms - (days * 24 * 60 * 60 * 1000)
@@ -23,7 +26,7 @@ def fetch_klines(symbol, interval, days, retries=3):
     while cursor < now_ms:
         for attempt in range(retries):
             try:
-                r = requests.get(f'{BASE}/api/v3/klines', params={
+                r = _session.get(f'{BASE}/api/v3/klines', params={
                     'symbol': symbol, 'interval': interval,
                     'startTime': cursor, 'endTime': now_ms, 'limit': 1000
                 }, timeout=30)
@@ -40,7 +43,7 @@ def fetch_klines(symbol, interval, days, retries=3):
         if page % 20 == 0:
             print(f"    {symbol} {interval}: page {page:4d} | {len(candles):7,} | {ms_to_dt(batch[-1][6])}")
         if len(batch) < 1000: break
-        time.sleep(0.04)
+        time.sleep(0.05)
     return candles
 
 def save_ohlcv(rows, fname):
@@ -88,11 +91,11 @@ for sym in ['BTCUSDT', 'ETHUSDT']:
                      sum(int(c[8]) for c in cs)])             # total trades
     save_ohlcv(rows, f"{sym.lower()}_10m_7d.csv")
 
-# ── 30s: 4 days via 1s resampling (~345k candles, ~4 min) ────────────────────
-print("\nFetching 1s candles for 30s resampling (4 days)...")
+# ── 30s: 2 days via 1s resampling (~172k candles, ~2 min, fits in 1GB RAM) ───
+print("\nFetching 1s candles for 30s resampling (2 days)...")
 for sym in ['BTCUSDT', 'ETHUSDT']:
     print(f"  {sym}...")
-    candles = fetch_klines(sym, '1s', 4)
+    candles = fetch_klines(sym, '1s', 2)
     print(f"  {sym}: {len(candles):,} raw 1s candles -> resampling to 30s...")
     buckets = defaultdict(list)
     for c in candles:
@@ -105,6 +108,6 @@ for sym in ['BTCUSDT', 'ETHUSDT']:
                      float(cs[0][1]), max(float(c[2]) for c in cs),
                      min(float(c[3]) for c in cs), float(cs[-1][4]),
                      round(sum(float(c[5]) for c in cs), 6), len(cs)])
-    save_ohlcv(rows, f"{sym.lower()}_30s_4d.csv")
+    save_ohlcv(rows, f"{sym.lower()}_30s_2d.csv")
 
 print("\nDone. All files ready.")
