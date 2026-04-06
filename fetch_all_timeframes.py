@@ -9,29 +9,13 @@ import requests, time, csv
 from datetime import datetime, timezone
 from collections import defaultdict
 
-BASES = ['https://api.binance.com', 'https://api.binance.us']
+BASE = 'https://api.binance.com'
 
 def ms_to_dt(ms):
     return datetime.fromtimestamp(ms/1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
 _session = requests.Session()
-_session.trust_env = False   # bypass system proxy on cloud servers
-
-def _pick_base():
-    """Test actual klines endpoint — ping doesn't get geo-blocked but klines does."""
-    for base in BASES:
-        try:
-            r = _session.get(f'{base}/api/v3/klines',
-                             params={'symbol':'BTCUSDT','interval':'1m','limit':1},
-                             timeout=10)
-            if r.status_code == 200:
-                print(f"  Using {base}")
-                return base
-        except Exception:
-            continue
-    raise RuntimeError("All Binance endpoints blocked or unreachable.")
-
-BASE = _pick_base()
+_session.trust_env = False
 
 def fetch_klines(symbol, interval, days, retries=3):
     now_ms   = int(time.time() * 1000)
@@ -69,26 +53,26 @@ def save_ohlcv(rows, fname):
         w.writerows(rows)
     print(f"  -> {fname}: {len(rows):,} rows")
 
-# ── 1m: 7 days — needed for both 1m analysis and 10m resampling ──────────────
-print("Fetching 1m candles (7 days)...")
+# ── 1m: 30 days — needed for both 1m analysis and 10m resampling ─────────────
+print("Fetching 1m candles (30 days)...")
 raw_1m = {}
 for sym in ['BTCUSDT', 'ETHUSDT']:
-    candles = fetch_klines(sym, '1m', 7)
+    candles = fetch_klines(sym, '1m', 30)
     rows = [[ms_to_dt(c[0]), float(c[1]), float(c[2]), float(c[3]),
              float(c[4]), float(c[5]), int(c[8])] for c in candles]
-    save_ohlcv(rows, f"{sym.lower()}_1m_7d.csv")
+    save_ohlcv(rows, f"{sym.lower()}_1m_30d.csv")
     raw_1m[sym] = candles  # keep in memory for 10m resampling
 
-# ── 5m: 7 days, ~2016 candles, instant ───────────────────────────────────────
-print("\nFetching 5m candles (7 days)...")
+# ── 5m: 30 days, ~8640 candles ───────────────────────────────────────────────
+print("\nFetching 5m candles (30 days)...")
 for sym in ['BTCUSDT', 'ETHUSDT']:
-    candles = fetch_klines(sym, '5m', 7)
+    candles = fetch_klines(sym, '5m', 30)
     rows = [[ms_to_dt(c[0]), float(c[1]), float(c[2]), float(c[3]),
              float(c[4]), float(c[5]), int(c[8])] for c in candles]
-    save_ohlcv(rows, f"{sym.lower()}_5m_7d.csv")
+    save_ohlcv(rows, f"{sym.lower()}_5m_30d.csv")
 
 # ── 10m: resample from 1m (Binance has no 10m interval) ──────────────────────
-print("\nResampling 1m -> 10m...")
+print("\nResampling 1m -> 10m (30 days)...")
 for sym in ['BTCUSDT', 'ETHUSDT']:
     candles = raw_1m[sym]
     buckets = defaultdict(list)
@@ -105,7 +89,7 @@ for sym in ['BTCUSDT', 'ETHUSDT']:
                      float(cs[-1][4]),                       # close of last 1m
                      round(sum(float(c[5]) for c in cs), 6), # total volume
                      sum(int(c[8]) for c in cs)])             # total trades
-    save_ohlcv(rows, f"{sym.lower()}_10m_7d.csv")
+    save_ohlcv(rows, f"{sym.lower()}_10m_30d.csv")
 
 # ── 30s: 2 days via 1s resampling (~172k candles, ~2 min, fits in 1GB RAM) ───
 print("\nFetching 1s candles for 30s resampling (2 days)...")

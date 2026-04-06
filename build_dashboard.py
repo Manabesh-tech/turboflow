@@ -219,12 +219,12 @@ def hourly_wr(data, payout, be):
 CONFIGS = [
     ('BTC','30s','btcusdt_30s_2d.csv','2 days'),
     ('ETH','30s','ethusdt_30s_2d.csv','2 days'),
-    ('BTC','1m', 'btcusdt_1m_7d.csv', '7 days'),
-    ('ETH','1m', 'ethusdt_1m_7d.csv', '7 days'),
-    ('BTC','5m', 'btcusdt_5m_7d.csv', '7 days'),
-    ('ETH','5m', 'ethusdt_5m_7d.csv', '7 days'),
-    ('BTC','10m','btcusdt_10m_7d.csv','7 days'),
-    ('ETH','10m','ethusdt_10m_7d.csv','7 days'),
+    ('BTC','1m', 'btcusdt_1m_30d.csv', '30 days'),
+    ('ETH','1m', 'ethusdt_1m_30d.csv', '30 days'),
+    ('BTC','5m', 'btcusdt_5m_30d.csv', '30 days'),
+    ('ETH','5m', 'ethusdt_5m_30d.csv', '30 days'),
+    ('BTC','10m','btcusdt_10m_30d.csv','30 days'),
+    ('ETH','10m','ethusdt_10m_30d.csv','30 days'),
 ]
 
 ALL = {}
@@ -786,24 +786,16 @@ FULL_HTML = f"""<!DOCTYPE html>
 <title>Turboflow — Edge Analysis Dashboard</title>
 {CSS}
 <style>
-#refresh-btn {{
-    background: #1e3a5f; border: 1px solid #3b82f6; color: #93c5fd;
-    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
-    cursor: pointer; transition: .15s; white-space: nowrap;
-}}
-#refresh-btn:hover:not(:disabled) {{ background: #1d4ed8; border-color: #60a5fa; color: #fff; }}
-#refresh-btn:disabled {{ opacity: .6; cursor: not-allowed; }}
-#refresh-status {{ font-size: 11px; color: var(--muted); margin-top: 4px; min-height: 16px; }}
+#refresh-status {{ font-size: 11px; color: var(--muted); min-height: 16px; }}
 </style>
 </head>
 <body>
 <div class="header">
   <div>
     <h1>Turboflow Binary Bet Edge Analysis <span class="badge">LIVE</span></h1>
-    <p>30s 80% payout (2 days) &bull; 1m 83% (7 days) &bull; 5m 85% (7 days) &bull; 10m 80% (7 days) &bull; BTC + ETH</p>
+    <p>30s 80% payout (2 days) &bull; 1m 83% (30 days) &bull; 5m 85% (30 days) &bull; 10m 80% (30 days) &bull; BTC + ETH</p>
   </div>
   <div style="text-align:right;">
-    <button id="refresh-btn" onclick="startRefresh()">&#8635; Refresh Data</button>
     <div id="refresh-status">Last built: {built_at}</div>
     <div style="color:var(--muted);font-size:10px;margin-top:2px;">Requires server.py running</div>
   </div>
