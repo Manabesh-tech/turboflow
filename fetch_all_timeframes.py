@@ -18,11 +18,13 @@ _session = requests.Session()
 _session.trust_env = False   # bypass system proxy on cloud servers
 
 def _pick_base():
-    """Return the first Binance base URL that isn't geo-blocked (not 451)."""
+    """Test actual klines endpoint — ping doesn't get geo-blocked but klines does."""
     for base in BASES:
         try:
-            r = _session.get(f'{base}/api/v3/ping', timeout=10)
-            if r.status_code != 451:
+            r = _session.get(f'{base}/api/v3/klines',
+                             params={'symbol':'BTCUSDT','interval':'1m','limit':1},
+                             timeout=10)
+            if r.status_code == 200:
                 print(f"  Using {base}")
                 return base
         except Exception:
