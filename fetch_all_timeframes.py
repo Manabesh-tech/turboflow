@@ -9,13 +9,27 @@ import requests, time, csv
 from datetime import datetime, timezone
 from collections import defaultdict
 
-BASE = 'https://api.binance.com'
+BASES = ['https://api.binance.com', 'https://api.binance.us']
 
 def ms_to_dt(ms):
     return datetime.fromtimestamp(ms/1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
 _session = requests.Session()
 _session.trust_env = False   # bypass system proxy on cloud servers
+
+def _pick_base():
+    """Return the first Binance base URL that isn't geo-blocked (not 451)."""
+    for base in BASES:
+        try:
+            r = _session.get(f'{base}/api/v3/ping', timeout=10)
+            if r.status_code != 451:
+                print(f"  Using {base}")
+                return base
+        except Exception:
+            continue
+    raise RuntimeError("All Binance endpoints blocked or unreachable.")
+
+BASE = _pick_base()
 
 def fetch_klines(symbol, interval, days, retries=3):
     now_ms   = int(time.time() * 1000)
