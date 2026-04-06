@@ -7,8 +7,19 @@ from datetime import datetime, timezone, timedelta
 
 SGT = timezone(timedelta(hours=8))
 
-BREAKEVEN = 1 / 1.8
-PAYOUT    = 0.80
+# Per-timeframe payout rates and breakeven thresholds
+TF_PAYOUTS = {
+    '30s': 0.80,
+    '1m':  0.83,
+    '5m':  0.85,
+    '10m': 0.80,
+}
+def tf_be(tf):     return 1 / (1 + TF_PAYOUTS[tf])   # breakeven win rate
+def tf_payout(tf): return TF_PAYOUTS[tf]
+
+# Default (used only for legacy helpers; overridden per-tf in analysis)
+BREAKEVEN = tf_be('30s')
+PAYOUT    = TF_PAYOUTS['30s']
 
 def load(fname):
     with open(fname) as f:
@@ -38,7 +49,7 @@ def load(fname):
         data.append(d)
     return [d for d in data if not d['is_flat']]
 
-def evf(wr):  return wr * PAYOUT - (1 - wr)
+def evf(wr, payout):  return wr * payout - (1 - wr)
 def ztest(wr, n, h0=BREAKEVEN):
     if n < 20: return 0, 1
     se = math.sqrt(h0*(1-h0)/n)
@@ -46,7 +57,7 @@ def ztest(wr, n, h0=BREAKEVEN):
     p  = 2*(1 - 0.5*(1 + math.erf(abs(z)/math.sqrt(2))))
     return round(z,2), round(p,4)
 
-def evaluate(signals, data):
+def evaluate(signals, data, payout):
     wins = total = 0
     for idx, direction in signals:
         if idx+1 >= len(data): continue
@@ -55,7 +66,7 @@ def evaluate(signals, data):
         total += 1
     if total == 0: return 0, 0, 0
     wr = wins / total
-    return wr, total, evf(wr)
+    return wr, total, evf(wr, payout)
 
 def calc_rsi(data, period=14):
     closes = [d['close'] for d in data]
@@ -73,7 +84,7 @@ def calc_rsi(data, period=14):
         rsi[i] = 100-100/(1+rs)
     return rsi
 
-def run_all(data):
+def run_all(data, payout, be):
     N = len(data)
     closes = [d['close'] for d in data]
     vols   = [d['vol']   for d in data]
@@ -81,12 +92,12 @@ def run_all(data):
     res    = []
 
     def add(name, sigs, min_n=30):
-        wr, n, ev_ = evaluate(sigs, data)
-        z, p = ztest(wr, n)
+        wr, n, ev_ = evaluate(sigs, data, payout)
+        z, p = ztest(wr, n, h0=be)
         if n >= min_n:
             res.append(dict(name=name, wr=round(wr,5), n=n, ev=round(ev_,4),
-                            z=z, p=p, edge=round(wr-BREAKEVEN,5),
-                            sig=(p<0.05 and n>=50), beats=(wr>BREAKEVEN)))
+                            z=z, p=p, edge=round(wr-be,5),
+                            sig=(p<0.05 and n>=50), beats=(wr>be)))
 
     add('Always UP',   [(i, 1)  for i in range(N-1)])
     add('Always DOWN', [(i, -1) for i in range(N-1)])
@@ -185,18 +196,23 @@ def run_all(data):
     return res
 
 # ── Hourly analysis ───────────────────────────────────────────────────────────
-def hourly_wr(data):
+def hourly_wr(data, payout, be):
     N = len(data)
     hours = []
     for h in range(24):
         sigs_u = [(i,  1) for i in range(N-1) if data[i]['hour']==h]
         sigs_d = [(i, -1) for i in range(N-1) if data[i]['hour']==h]
-        wr_u, nu, _ = evaluate(sigs_u, data)
-        wr_d, nd, _ = evaluate(sigs_d, data)
+        wr_u, nu, _ = evaluate(sigs_u, data, payout)
+        wr_d, nd, _ = evaluate(sigs_d, data, payout)
         best = max(wr_u, wr_d)
-        z, p = ztest(best, nu)
+        # Bonferroni-correct for testing both directions
+        if wr_u >= wr_d:
+            z, p = ztest(wr_u, nu, h0=be); p = min(1.0, round(p*2, 4))
+        else:
+            z, p = ztest(wr_d, nd, h0=be); p = min(1.0, round(p*2, 4))
         hours.append({'h':h,'wr_u':wr_u,'wr_d':wr_d,'best':best,
-                      'dir':'UP' if wr_u>=wr_d else 'DN','n':nu,'z':z,'p':p})
+                      'dir':'UP' if wr_u>=wr_d else 'DN','n':nu,'z':z,'p':p,
+                      'beats': best>be})
     return hours
 
 # ── Load & run ────────────────────────────────────────────────────────────────
@@ -207,19 +223,24 @@ CONFIGS = [
     ('ETH','1m', 'ethusdt_1m_7d.csv', '7 days'),
     ('BTC','5m', 'btcusdt_5m_7d.csv', '7 days'),
     ('ETH','5m', 'ethusdt_5m_7d.csv', '7 days'),
+    ('BTC','10m','btcusdt_10m_7d.csv','7 days'),
+    ('ETH','10m','ethusdt_10m_7d.csv','7 days'),
 ]
 
 ALL = {}
 for sym, tf, fname, period in CONFIGS:
-    key = f"{sym} {tf}"
-    print(f"  Analysing {key} ({period})...")
+    key    = f"{sym} {tf}"
+    payout = tf_payout(tf)
+    be     = tf_be(tf)
+    print(f"  Analysing {key} ({period}) | payout={payout*100:.0f}% | BE={be*100:.3f}%...")
     data = load(fname)
     N = len(data)
     up_pct = sum(1 for i in range(N-1) if data[i+1]['close']>data[i]['close'])/(N-1)
-    strats = run_all(data)
-    hours  = hourly_wr(data)
+    strats = run_all(data, payout, be)
+    hours  = hourly_wr(data, payout, be)
     ALL[key] = {
         'sym': sym, 'tf': tf, 'period': period,
+        'payout': payout, 'be': be,
         'n': N,
         'up_pct': round(up_pct, 4),
         'price_start': round(data[0]['close'], 2),
@@ -286,12 +307,12 @@ tr:hover td{background:#1e2130;}
 </style>
 """
 
-def pill(wr, n=None):
+def pill(wr, be=BREAKEVEN, n=None):
     txt = f"{wr*100:.2f}%"
     if n is not None and n < 50:
         return f'<span class="pill pm">{txt}</span>'
-    if wr > BREAKEVEN:    return f'<span class="pill pg">{txt}</span>'
-    if wr > 0.53:         return f'<span class="pill py">{txt}</span>'
+    if wr > be:      return f'<span class="pill pg">{txt}</span>'
+    if wr > be-0.02: return f'<span class="pill py">{txt}</span>'
     return f'<span class="pill pr">{txt}</span>'
 
 def status(s):
@@ -304,21 +325,21 @@ def evcolor(v):
     cls = 'g' if v > 0 else 'r'
     return f'<span class="{cls}">{v:+.4f}</span>'
 
-def heatcolor(wr):
-    # green if above BE, red if below 0.48, yellow in between
-    if wr > BREAKEVEN:
+def heatcolor(wr, be=BREAKEVEN):
+    # green if above BE, red if below, yellow in between
+    if wr > be:
         intensity = min(1, (wr - BREAKEVEN) / 0.08)
         r = int(34  + intensity * 40)
         g = int(197 - intensity * 50)
         b = int(94  - intensity * 60)
     else:
-        intensity = min(1, (BREAKEVEN - wr) / 0.08)
+        intensity = min(1, (be - wr) / 0.08)
         r = int(239 - intensity * 50)
         g = int(68  - intensity * 30)
         b = int(68  - intensity * 30)
     return f"rgb({r},{g},{b})"
 
-def strat_table(strats, limit=None, only_beats=False):
+def strat_table(strats, be=BREAKEVEN, limit=None, only_beats=False):
     rows = [s for s in strats if (not only_beats or s['beats'])]
     if limit: rows = rows[:limit]
     if not rows:
@@ -328,13 +349,13 @@ def strat_table(strats, limit=None, only_beats=False):
         <th>n bets</th><th>EV/$1</th><th>z-score</th><th>p-value</th><th>Status</th>
     </tr></thead><tbody>'''
     for i, s in enumerate(rows):
-        edge = (s['wr'] - BREAKEVEN) * 100
+        edge = (s['wr'] - be) * 100
         ec   = 'g' if edge >= 0 else 'r'
         pc   = 'g' if s['p'] < 0.05 else ''
         h += f'''<tr>
             <td style="color:var(--muted);">{i+1}</td>
             <td style="font-family:monospace;color:var(--blue);">{s["name"]}</td>
-            <td>{pill(s["wr"], s["n"])}</td>
+            <td>{pill(s["wr"], be, s["n"])}</td>
             <td><span class="{ec}">{edge:+.2f}pp</span></td>
             <td>{s["n"]:,}</td>
             <td>{evcolor(s["ev"])}</td>
@@ -345,31 +366,30 @@ def strat_table(strats, limit=None, only_beats=False):
     h += '</tbody></table>'
     return h
 
-def hour_heatmap(hours, key):
+def hour_heatmap(hours, be=BREAKEVEN):
     h = '<div class="heat">'
     for hr in hours:
-        bg  = heatcolor(hr['best'])
-        tc  = '#fff'
-        beat = '▲' if hr['best'] > BREAKEVEN else ''
-        h += f'<div class="hcell" style="background:{bg};color:{tc};" title="{hr["h"]:02d}:00 — WR {hr["best"]*100:.1f}% n={hr["n"]}">'
+        bg   = heatcolor(hr['best'], be)
+        beat = '▲' if hr['best'] > be else ''
+        h += f'<div class="hcell" style="background:{bg};color:#fff;" title="{hr["h"]:02d}:00 SGT — WR {hr["best"]*100:.1f}% n={hr["n"]}">'
         h += f'<div>{hr["h"]:02d}</div><div>{hr["best"]*100:.1f}</div><div style="font-size:8px;">{hr["dir"]}{beat}</div></div>'
     h += '</div>'
-    # Hour table
     h += '''<table style="margin-top:12px;font-size:11px;"><thead><tr>
         <th>Hour (SGT)</th><th>Best Dir</th><th>Best WR</th><th>WR UP</th><th>WR DN</th>
-        <th>n</th><th>z</th><th>p</th><th>Beats BE?</th></tr></thead><tbody>'''
+        <th>n</th><th>z</th><th>p (adj)</th><th>WR &gt; BE?</th></tr></thead><tbody>'''
     for hr in hours:
         dc  = 'r' if hr['dir']=='DN' else 'g'
-        bst = hr['best']>BREAKEVEN
+        bst = hr['beats']
+        pc  = 'g' if hr['p'] < 0.05 else ''
         h += f'''<tr>
             <td><b>{hr["h"]:02d}:00</b></td>
             <td><span class="{dc}">{hr["dir"]}</span></td>
-            <td>{pill(hr["best"])}</td>
+            <td>{pill(hr["best"], be)}</td>
             <td class="g">{hr["wr_u"]*100:.2f}%</td>
             <td class="r">{hr["wr_d"]*100:.2f}%</td>
             <td>{hr["n"]}</td>
             <td>{hr["z"]:+.2f}</td>
-            <td>{hr["p"]}</td>
+            <td class="{pc}">{hr["p"]}</td>
             <td>{"<span class='pill pg'>YES</span>" if bst else "<span class='pill pm'>no</span>"}</td>
         </tr>'''
     h += '</tbody></table>'
@@ -391,6 +411,7 @@ def section_overview():
             <hr class="divider">
             <div class="sub">Price change: <span class="{pc}">{pch:+.2f}%</span></div>
             <div class="sub">DOWN bias: <b>{dn:.2f}%</b></div>
+            <div class="sub">Payout: <b>{d["payout"]*100:.0f}%</b> &bull; BE: <b>{d["be"]*100:.3f}%</b></div>
             <div class="sub" style="margin-top:6px;">
                 Beats BE: <b style="color:{"var(--green)" if d["n_sig"]>0 else "var(--text)"}">
                 {d["n_sig"]} sig</b> / {d["n_beats"]} total
@@ -409,16 +430,19 @@ def section_overview():
     h += '<div class="grid g2">'
 
     # Sig table
-    h += '<div class="card"><h3>Statistically Significant Edges (p&lt;0.05, WR&gt;55.56%, n≥50)</h3>'
+    h += '<div class="card"><h3>Statistically Significant Edges (p&lt;0.05, WR&gt;breakeven, n&#8805;50)</h3>'
     if sig_all:
-        h += '''<table><thead><tr><th>Asset/TF</th><th>Strategy</th><th>Win Rate</th>
-                <th>Edge</th><th>n</th><th>EV/$100</th><th>p-val</th></tr></thead><tbody>'''
+        h += '''<table><thead><tr><th>Asset/TF</th><th>Strategy</th><th>Payout</th><th>Win Rate</th>
+                <th>BE</th><th>Edge</th><th>n</th><th>EV/$100</th><th>p-val</th></tr></thead><tbody>'''
         for s in sig_all[:15]:
-            edge = (s['wr'] - BREAKEVEN)*100
+            be   = ALL[s['asset']]['be']
+            edge = (s['wr'] - be)*100
             h += f'''<tr>
                 <td><b>{s["asset"]}</b></td>
                 <td style="font-family:monospace;color:var(--blue);">{s["name"]}</td>
-                <td>{pill(s["wr"])}</td>
+                <td>{ALL[s["asset"]]["payout"]*100:.0f}%</td>
+                <td>{pill(s["wr"], be)}</td>
+                <td style="color:var(--muted);">{be*100:.3f}%</td>
                 <td class="g">+{edge:.2f}pp</td>
                 <td>{s["n"]:,}</td>
                 <td class="g">+${s["ev"]*100:.2f}</td>
@@ -455,17 +479,17 @@ def section_all_strategies():
     h = ''
     for key, d in ALL.items():
         h += f'<div class="section"><h2>{key} — All Strategies <span class="tf-label">{d["period"]}</span></h2>'
-        h += f'<p class="footnote" style="margin-bottom:10px;">{d["n"]:,} active candles | {d["date_start"]} to {d["date_end"]} | {d["n_beats"]} beat BE | {d["n_sig"]} statistically significant</p>'
-        h += '<div class="card">' + strat_table(d["strats"]) + '</div></div>'
+        h += f'<p class="footnote" style="margin-bottom:10px;">{d["n"]:,} active candles | {d["date_start"]} to {d["date_end"]} | Payout: {d["payout"]*100:.0f}% | BE: {d["be"]*100:.3f}% | {d["n_beats"]} beat BE | {d["n_sig"]} statistically significant</p>'
+        h += '<div class="card">' + strat_table(d["strats"], d["be"]) + '</div></div>'
     return h
 
 def section_hourly():
     h = ''
     for key, d in ALL.items():
-        beats = sum(1 for hr in d['hours'] if hr['best'] > BREAKEVEN)
+        beats = sum(1 for hr in d['hours'] if hr['beats'])
         h += f'<div class="section"><h2>{key} — Hourly Win Rate Heatmap</h2>'
-        h += f'<p class="footnote" style="margin-bottom:10px;">{beats}/24 hours beat breakeven (55.56%) &bull; All times in Singapore Time (SGT = UTC+8)</p>'
-        h += '<div class="card">' + hour_heatmap(d['hours'], key) + '</div></div>'
+        h += f'<p class="footnote" style="margin-bottom:10px;">{beats}/24 hours beat breakeven ({d["be"]*100:.3f}% at {d["payout"]*100:.0f}% payout) &bull; All times in Singapore Time (SGT = UTC+8)</p>'
+        h += '<div class="card">' + hour_heatmap(d['hours'], d['be']) + '</div></div>'
     return h
 
 def section_streaks():
@@ -474,12 +498,12 @@ def section_streaks():
         streak_strats = [s for s in d['strats'] if 'Streak' in s['name']]
         if not streak_strats: continue
         h += f'<div class="section"><h2>{key} Streaks</h2>'
-        h += '<div class="card">' + strat_table(streak_strats) + '</div></div>'
+        h += '<div class="card">' + strat_table(streak_strats, d['be']) + '</div></div>'
     return h
 
 def section_rsi():
     h = '<div class="card" style="margin-bottom:20px;"><h3>RSI Strategy Results — All Timeframes</h3>'
-    h += '''<table><thead><tr><th>Asset/TF</th><th>RSI Period</th><th>OB/OS</th>
+    h += '''<table><thead><tr><th>Asset/TF</th><th>Payout</th><th>BE</th><th>RSI Period</th><th>OB/OS</th>
             <th>Win Rate</th><th>n</th><th>EV/$1</th><th>z</th><th>p-val</th><th>Status</th>
             </tr></thead><tbody>'''
     for key, d in ALL.items():
@@ -488,9 +512,11 @@ def section_rsi():
             pc = 'g' if s['p'] < 0.05 else ''
             h += f'''<tr>
                 <td><b>{key}</b></td>
+                <td>{d["payout"]*100:.0f}%</td>
+                <td style="color:var(--muted);">{d["be"]*100:.3f}%</td>
                 <td>{"14" if "14" in s["name"] else "7"}</td>
                 <td style="font-family:monospace;">{s["name"].split(")")[1].strip()}</td>
-                <td>{pill(s["wr"], s["n"])}</td>
+                <td>{pill(s["wr"], d["be"], s["n"])}</td>
                 <td>{s["n"]:,}</td>
                 <td>{evcolor(s["ev"])}</td>
                 <td>{s["z"]:+.2f}</td>
@@ -498,16 +524,15 @@ def section_rsi():
                 <td>{status(s)}</td></tr>'''
     h += '</tbody></table></div>'
 
-    # RSI verdict
     sig_rsi = [s for key, d in ALL.items() for s in d['strats'] if s['name'].startswith('RSI') and s['sig'] and s['beats']]
     if sig_rsi:
         h += '<div class="verdict vd">'
-        h += f'<b>⚠ RSI Edge Detected on {len(sig_rsi)} combination(s)</b><ul style="margin-top:8px;margin-left:16px;color:var(--muted);">'
+        h += f'<b>RSI Edge Detected on {len(sig_rsi)} combination(s)</b><ul style="margin-top:8px;margin-left:16px;color:var(--muted);">'
         for s in sig_rsi:
             h += f'<li>{s["name"]} — WR={s["wr"]*100:.2f}%  EV/bet={s["ev"]:+.4f}  p={s["p"]}</li>'
         h += '</ul></div>'
     else:
-        h += '<div class="verdict vs"><b>RSI: No Significant Edge Found</b><br><span style="color:var(--muted);font-size:12px;">RSI does not consistently beat the 55.56% breakeven threshold with statistical significance across the tested period.</span></div>'
+        h += '<div class="verdict vs"><b>RSI: No Significant Edge Found</b><br><span style="color:var(--muted);font-size:12px;">RSI does not consistently beat the breakeven threshold with statistical significance across any timeframe.</span></div>'
     return h
 
 def section_risk():
@@ -542,15 +567,15 @@ def section_risk():
 
     # Payout table
     h += '<div class="card" style="margin-bottom:20px;"><h3>Breakeven Win Rate by Payout</h3>'
-    h += '''<table><thead><tr><th>Payout Rate</th><th>Breakeven Win Rate</th>
-            <th>Gap vs current (80%)</th><th>Assessment</th></tr></thead><tbody>'''
-    for po in [70,72,75,77,78,79,80,82,85,90]:
-        be  = 1/(1+po/100)
-        gap = (be - BREAKEVEN)*100
-        gc  = 'g' if gap > 0 else 'r'
-        note = '← Current' if po==80 else ('More protection' if po<80 else 'Less protection')
-        h += f'<tr><td><b>{po}%</b></td><td>{be*100:.3f}%</td>'
-        h += f'<td><span class="{gc}">{gap:+.2f}pp</span></td><td style="color:var(--muted);">{note}</td></tr>'
+    h += '''<table><thead><tr><th>Payout Rate</th><th>Breakeven Win Rate</th><th>Products</th><th>Assessment</th></tr></thead><tbody>'''
+    current = {80: '30s + 10m', 83: '1m', 85: '5m'}
+    for po in [70,72,75,77,78,79,80,82,83,85,90]:
+        be_val = 1/(1+po/100)
+        prod   = current.get(po, '')
+        note   = f'&#8592; {prod}' if prod else ('More protection' if po < 80 else 'Less protection')
+        bold   = 'font-weight:700;' if prod else ''
+        h += f'<tr style="{bold}"><td><b>{po}%</b></td><td>{be_val*100:.3f}%</td>'
+        h += f'<td style="color:var(--blue);">{prod}</td><td style="color:var(--muted);">{note}</td></tr>'
     h += '</tbody></table></div>'
 
     # Mitigations
@@ -571,6 +596,76 @@ def section_risk():
     </tbody></table></div>'''
     return h
 
+def section_guide():
+    STRATS = [
+        ('Baseline', [
+            ('Always UP',   'Always bet the next candle closes higher. No logic — pure directional baseline.'),
+            ('Always DOWN', 'Always bet the next candle closes lower. Used to measure raw market direction bias.'),
+        ]),
+        ('Momentum & Reversion', [
+            ('Momentum(n)', 'Look at the last n candles. If the net direction was UP, bet UP. Assumes trends continue.'),
+            ('Reversion(n)', 'Look at the last n candles. If the net direction was UP, bet DOWN. Assumes prices snap back. n tested: 1, 2, 3, 5, 10, 20.'),
+        ]),
+        ('Streaks', [
+            ('Streak-Mom(n)', 'If exactly the last n candles ALL moved the same direction, bet that direction continues. e.g. 5 reds in a row → bet red again.'),
+            ('Streak-Rev(n)', 'If exactly the last n candles ALL moved the same direction, bet the reversal. e.g. 5 reds → bet green. n tested: 2–7.'),
+        ]),
+        ('Moving Average Crossover', [
+            ('MA(fast × slow)', 'Compute a fast moving average and a slow moving average of closing prices. If fast > slow, trend is up → bet UP. If fast < slow → bet DOWN. Pairs tested: (2,5), (3,10), (5,20), (10,30).'),
+        ]),
+        ('RSI — Relative Strength Index', [
+            ('RSI(period) OB/OS', 'RSI measures momentum on a 0–100 scale. Above overbought (OB) threshold → bet DOWN (reversion). Below oversold (OS) threshold → bet UP. Periods: 7, 14. Thresholds: 70/30, 65/35, 60/40.'),
+        ]),
+        ('Candle Shape', [
+            ('Doji-Rev(<thresh)', 'A Doji candle has open ≈ close (tiny body vs total range). Signals indecision. Strategy: bet the next candle reverses. Body ratio thresholds: <2%, <5%, <10%. Flat candles (open = close exactly) are excluded.'),
+            ('Marub-Mom(>thresh)', 'A Marubozu candle has a very large body relative to range — a strong decisive move. Bet the move continues next candle. Thresholds: >80%, >90%, >95% body ratio.'),
+            ('Marub-Rev(>thresh)', 'Same Marubozu detection, but bet the strong move reverses next candle.'),
+        ]),
+        ('Volume', [
+            ('Vol-Mom(>Nx, w=W)', 'If this candle\'s volume is N times above the rolling W-candle average AND the candle has a direction, bet that direction continues. Volume spike = conviction.'),
+            ('Vol-Fade(>Nx, w=W)', 'Same volume spike detection, but bet the opposite direction — the spike was the climax and price fades. Multipliers: 1.5×, 2×, 3×. Windows: 10, 20.'),
+        ]),
+        ('ATR — Volatility Regime', [
+            ('ATR(p) High-ATR-Mom/Rev', 'ATR (Average True Range) measures how much price moves per candle. In a HIGH volatility regime (current range > ATR average), bet momentum continues or reverses.'),
+            ('ATR(p) Low-ATR-Mom/Rev',  'In a LOW volatility regime (current range < 50% of ATR average), bet momentum or reversal. Periods: 10, 20.'),
+        ]),
+        ('VWAP — Volume Weighted Average Price', [
+            ('VWAP-Mom(w=W)', 'VWAP is the average price weighted by volume over a rolling window. If current price is above VWAP → bet UP (price has upward momentum). Window: 20, 60 candles.'),
+            ('VWAP-Rev(w=W)', 'If price is above VWAP → bet DOWN (price will revert to the mean). Same windows.'),
+        ]),
+        ('Big Move Fade', [
+            ('BigMove-Fade(≥x%)', 'If a candle moved ≥x% from the previous close, bet the next candle reverses. Based on the idea that sharp moves overextend and snap back. Thresholds: 0.05%, 0.10%, 0.20%, 0.50%.'),
+        ]),
+    ]
+
+    h = '<div class="card" style="margin-bottom:20px;">'
+    h += '<h3>How to Read Results</h3>'
+    h += ('<table><thead><tr><th>Badge</th><th>Meaning</th><th>Risk to Platform</th></tr></thead><tbody>'
+          '<tr><td><span class="pill pg">SIG + EDGE</span></td>'
+          '<td>Win rate &gt; 55.56% <b>and</b> statistically proven (p&lt;0.05, n&#8805;50)</td>'
+          '<td class="r"><b>HIGH &#8212; exploitable</b></td></tr>'
+          '<tr><td><span class="pill py">Beats BE</span></td>'
+          '<td>Win rate &gt; 55.56% but may be luck &#8212; not enough data to confirm</td>'
+          '<td class="y">Monitor</td></tr>'
+          '<tr><td><span class="pill pb">Sig only</span></td>'
+          '<td>Statistically proven pattern but win rate is <b>below</b> breakeven &#8212; a reliable loser</td>'
+          '<td class="g">Good for platform</td></tr>'
+          '<tr><td><span class="pill pm">&#8212;</span></td>'
+          '<td>No pattern &#8212; noise</td>'
+          '<td class="g">No risk</td></tr>'
+          '</tbody></table>')
+    h += '<p class="footnote" style="margin-top:12px;">Breakeven = 55.56% for 80% payout. Formula: 1 ÷ (1 + 0.80) = 0.5556. Any strategy consistently above this is a platform risk.</p>'
+    h += '</div>'
+
+    for group, items in STRATS:
+        h += f'<div class="card" style="margin-bottom:16px;"><h3>{group}</h3>'
+        h += '<table><thead><tr><th style="width:220px;">Strategy</th><th>What it does</th></tr></thead><tbody>'
+        for name, desc in items:
+            h += f'<tr><td style="font-family:monospace;color:var(--blue);vertical-align:top;">{name}</td><td style="color:var(--muted);">{desc}</td></tr>'
+        h += '</tbody></table></div>'
+
+    return h
+
 # ── Assemble full HTML ────────────────────────────────────────────────────────
 NAV_ITEMS = [
     ('overview',    'Overview'),
@@ -579,6 +674,7 @@ NAV_ITEMS = [
     ('rsi',         'RSI Analysis'),
     ('streaks',     'Streaks'),
     ('risk',        'Platform Risk'),
+    ('guide',       'Strategy Guide'),
 ]
 
 SECTIONS = {
@@ -588,6 +684,7 @@ SECTIONS = {
     'rsi':        section_rsi(),
     'streaks':    section_streaks(),
     'risk':       section_risk(),
+    'guide':      section_guide(),
 }
 
 nav_html = '<nav>'
@@ -703,7 +800,7 @@ FULL_HTML = f"""<!DOCTYPE html>
 <div class="header">
   <div>
     <h1>Turboflow Binary Bet Edge Analysis <span class="badge">LIVE</span></h1>
-    <p>30s (4 days) &bull; 1m (7 days) &bull; 5m (7 days) &bull; BTC + ETH &bull; Breakeven = 55.56% (80% payout)</p>
+    <p>30s 80% payout (BE 55.56%) &bull; 1m 83% (BE 54.64%) &bull; 5m 85% (BE 54.05%) &bull; 10m 80% (BE 55.56%) &bull; BTC + ETH</p>
   </div>
   <div style="text-align:right;">
     <button id="refresh-btn" onclick="startRefresh()">&#8635; Refresh Data</button>

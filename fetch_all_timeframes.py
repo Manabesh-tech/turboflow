@@ -1,8 +1,9 @@
 """
 Fetch all timeframes needed for dashboard:
-  30s  -> use 1s candles, 4 days (manageable: ~345k candles, ~350 pages)
-  1m   -> already have (7 days)
-  5m   -> fetch now (7 days, tiny: ~2016 candles, 3 pages)
+  30s  -> use 1s candles, 4 days (~345k candles, ~4 min)
+  1m   -> 7 days (~10k candles, fast)
+  5m   -> 7 days (~2k candles, instant)
+  10m  -> resample from 5m (Binance has no 10m interval natively)
 """
 import requests, time, csv
 from datetime import datetime, timezone
@@ -49,15 +50,45 @@ def save_ohlcv(rows, fname):
         w.writerows(rows)
     print(f"  -> {fname}: {len(rows):,} rows")
 
+# ── 1m: 7 days — needed for both 1m analysis and 10m resampling ──────────────
+print("Fetching 1m candles (7 days)...")
+raw_1m = {}
+for sym in ['BTCUSDT', 'ETHUSDT']:
+    candles = fetch_klines(sym, '1m', 7)
+    rows = [[ms_to_dt(c[0]), float(c[1]), float(c[2]), float(c[3]),
+             float(c[4]), float(c[5]), int(c[8])] for c in candles]
+    save_ohlcv(rows, f"{sym.lower()}_1m_7d.csv")
+    raw_1m[sym] = candles  # keep in memory for 10m resampling
+
 # ── 5m: 7 days, ~2016 candles, instant ───────────────────────────────────────
-print("Fetching 5m candles (7 days)...")
+print("\nFetching 5m candles (7 days)...")
 for sym in ['BTCUSDT', 'ETHUSDT']:
     candles = fetch_klines(sym, '5m', 7)
     rows = [[ms_to_dt(c[0]), float(c[1]), float(c[2]), float(c[3]),
              float(c[4]), float(c[5]), int(c[8])] for c in candles]
     save_ohlcv(rows, f"{sym.lower()}_5m_7d.csv")
 
-# ── 30s: 4 days via 1s resampling (~345k pages, ~4 min) ─────────────────────
+# ── 10m: resample from 1m (Binance has no 10m interval) ──────────────────────
+print("\nResampling 1m -> 10m...")
+for sym in ['BTCUSDT', 'ETHUSDT']:
+    candles = raw_1m[sym]
+    buckets = defaultdict(list)
+    for c in candles:
+        bts = (int(c[0]) // 600000) * 600000   # floor to 10-minute boundary
+        buckets[bts].append(c)
+    rows = []
+    for bts in sorted(buckets.keys()):
+        cs = buckets[bts]
+        rows.append([ms_to_dt(bts),
+                     float(cs[0][1]),                        # open  of first 1m
+                     max(float(c[2]) for c in cs),           # high
+                     min(float(c[3]) for c in cs),           # low
+                     float(cs[-1][4]),                       # close of last 1m
+                     round(sum(float(c[5]) for c in cs), 6), # total volume
+                     sum(int(c[8]) for c in cs)])             # total trades
+    save_ohlcv(rows, f"{sym.lower()}_10m_7d.csv")
+
+# ── 30s: 4 days via 1s resampling (~345k candles, ~4 min) ────────────────────
 print("\nFetching 1s candles for 30s resampling (4 days)...")
 for sym in ['BTCUSDT', 'ETHUSDT']:
     print(f"  {sym}...")
