@@ -33,6 +33,8 @@ header {visibility: hidden;}
 
 if HTML_FILE.exists():
     html = HTML_FILE.read_text(encoding='utf-8')
+    # Hide the local-only refresh button on the public page
+    html = html.replace('</head>', '<style>#refresh-btn{display:none!important;}</style></head>', 1)
     st.components.v1.html(html, height=900, scrolling=True)
 else:
     st.warning("Dashboard not built yet. Run build_dashboard.py locally and upload edge_dashboard.html to GitHub.")

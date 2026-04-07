@@ -786,7 +786,14 @@ FULL_HTML = f"""<!DOCTYPE html>
 <title>Turboflow — Edge Analysis Dashboard</title>
 {CSS}
 <style>
-#refresh-status {{ font-size: 11px; color: var(--muted); min-height: 16px; }}
+#refresh-btn {{
+    background: #1e3a5f; border: 1px solid #3b82f6; color: #93c5fd;
+    padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: .15s; white-space: nowrap;
+}}
+#refresh-btn:hover:not(:disabled) {{ background: #1d4ed8; border-color: #60a5fa; color: #fff; }}
+#refresh-btn:disabled {{ opacity: .6; cursor: not-allowed; }}
+#refresh-status {{ font-size: 11px; color: var(--muted); margin-top: 4px; min-height: 16px; }}
 </style>
 </head>
 <body>
@@ -796,6 +803,7 @@ FULL_HTML = f"""<!DOCTYPE html>
     <p>30s 80% payout (2 days) &bull; 1m 83% (30 days) &bull; 5m 85% (30 days) &bull; 10m 80% (30 days) &bull; BTC + ETH</p>
   </div>
   <div style="text-align:right;">
+    <button id="refresh-btn" onclick="startRefresh()">&#8635; Refresh Data</button>
     <div id="refresh-status">Last built: {built_at}</div>
     <div style="color:var(--muted);font-size:10px;margin-top:2px;">Requires server.py running</div>
   </div>
