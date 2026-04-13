@@ -380,22 +380,39 @@ with tabs[3]:
         filt = filt[filt["suspicious_flag"]]
 
     st.write(f"Filtered events: {len(filt):,}")
-    display_cols = [c for c in filt.columns if c != "fix_time_utc"]
-    display_df = filt.sort_values("zmax", ascending=False)[display_cols].copy()
 
-    percent_cols = [
-        c for c in display_df.columns
-        if c.endswith("_pct") or c.endswith("_ann_pct")
+    # Only show the columns that matter — drop all redundant bp/pct/5s/20s volatility columns.
+    keep_cols = [
+        c for c in [
+            "fix_time_sgt",
+            "fix_ret_1s_bp",
+            "z10",
+            "z20",
+            "zmax",
+            "spike_flag",
+            "reversal_2s",
+            "suspicious_flag",
+            "realized_volatility_10s_ann_pct",
+            "hour_sgt",
+            "dow_sgt",
+        ] if c in filt.columns
     ]
-    bp_cols = [c for c in display_df.columns if c.endswith("_bp")]
-
+    display_df = filt.sort_values("zmax", ascending=False)[keep_cols].copy()
+    display_df = display_df.rename(columns={
+        "fix_time_sgt": "Fix Time (SGT)",
+        "fix_ret_1s_bp": "1s Move (bp)",
+        "realized_volatility_10s_ann_pct": "10s Realized Volatility (Ann. %)",
+        "hour_sgt": "Hour (SGT)",
+        "dow_sgt": "Day",
+    })
     fmt = {}
-    for c in percent_cols:
-        fmt[c] = "{:.4f}%"
-    for c in bp_cols:
-        fmt[c] = "{:.4f} bp"
-
-    st.caption("Volatility columns ending in _pct or _ann_pct are displayed in percent units.")
+    if "1s Move (bp)" in display_df.columns:
+        fmt["1s Move (bp)"] = "{:.3f}"
+    if "10s Realized Volatility (Ann. %)" in display_df.columns:
+        fmt["10s Realized Volatility (Ann. %)"] = "{:.4f}%"
+    for c in ["z10", "z20", "zmax"]:
+        if c in display_df.columns:
+            fmt[c] = "{:.2f}"
     st.dataframe(
         display_df.style.format(fmt),
         use_container_width=True,
