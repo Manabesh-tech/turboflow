@@ -1,0 +1,8 @@
+dow,fixes,avg_zmax,spike_pct,suspicious_pct,avg_abs_fix_bp
+Monday,20,1.15,5.0,0.0,0.299
+Tuesday,133,24.8,21.8,6.77,1.185
+Wednesday,283,8.81,14.13,3.89,0.475
+Thursday,285,6.29,14.04,3.16,0.461
+Friday,288,7.99,11.11,3.12,0.368
+Saturday,288,5.63,8.68,1.74,0.185
+Sunday,288,5.35,10.07,3.82,0.357

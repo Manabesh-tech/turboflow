@@ -1,0 +1,5 @@
+volatility_quartile,n,avg_realized_volatility_bp,min_realized_volatility_bp,max_realized_volatility_bp,avg_volume_10m,avg_trades_10m,spike_pct,suspicious_pct
+Q1 Low,221,2.63,0.91,3.38,76.66,14032.38,15.84,2.71
+Q2 Med-Low,220,3.98,3.38,4.65,93.49,19223.55,16.82,3.64
+Q3 Med-High,220,5.5,4.66,6.75,134.44,27750.54,13.18,5.91
+Q4 High,221,10.18,6.77,26.76,277.2,52225.12,13.12,3.17
