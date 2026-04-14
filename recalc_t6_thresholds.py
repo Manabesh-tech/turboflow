@@ -87,6 +87,13 @@ def main() -> None:
             suspicious_pct=lambda d: d["suspicious_pct"] * 100,
         )
         .reset_index()
+        .rename(columns={
+            "quartile": "Volatility Group",
+            "n": "Fix Windows",
+            "avg_vol": "Avg Realized Volatility (Ann. %)",
+            "min_vol": "Min Realized Volatility (Ann. %)",
+            "max_vol": "Max Realized Volatility (Ann. %)",
+        })
     )
 
     # Decile summary.
@@ -107,6 +114,13 @@ def main() -> None:
             suspicious_pct=lambda d: d["suspicious_pct"] * 100,
         )
         .reset_index()
+        .rename(columns={
+            "decile": "Volatility Decile",
+            "n": "Fix Windows",
+            "avg_vol": "Avg Realized Volatility (Ann. %)",
+            "min_vol": "Min Realized Volatility (Ann. %)",
+            "max_vol": "Max Realized Volatility (Ann. %)",
+        })
     )
 
     corr_spike = data["vol10_ann_pct_t6"].corr(data["spike_flag"])
