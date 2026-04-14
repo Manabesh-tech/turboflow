@@ -69,6 +69,7 @@ st.set_page_config(
 
 st.title("TurboFlow Binary Trading Manipulation Monitor")
 st.caption("1-second fix spike detection + volatility risk profiling  |  All times in Singapore Time (SGT, UTC+8)")
+st.info("Volatility Patterns tab defaults to T-6 decision-time model (window ends at T-6s before fix).")
 
 with st.sidebar:
     st.header("Data Sources")
@@ -77,8 +78,8 @@ with st.sidebar:
     spike_day_file = st.text_input("Spike risk by day", value="fix_spike_risk_by_day.csv")
     volatility_hour_file = st.text_input("Volatility risk by hour", value="fix_risk_by_hour_utc.csv")
     volatility_day_file = st.text_input("Volatility risk by day", value="fix_risk_by_day.csv")
-    volatility_quartile_file = st.text_input("Volatility quartile summary", value="fix_volatility_10s_quartile_summary.csv")
-    volatility_decile_file = st.text_input("Volatility decile summary", value="fix_volatility_10s_decile_summary.csv")
+    volatility_quartile_file = st.text_input("Volatility quartile summary", value="fix_volatility_10s_t6_quartile_summary.csv")
+    volatility_decile_file = st.text_input("Volatility decile summary", value="fix_volatility_10s_t6_decile_summary.csv")
     st.markdown("---")
     st.write("Refresh analysis files before loading dashboard:")
     st.code(
@@ -140,6 +141,46 @@ with st.expander("What do these numbers mean? (click to expand)", expanded=False
         "**Suspicious %** — out of all fix windows, what % had a spike AND an immediate reversal. "
         "This is the narrow, high-confidence manipulation signal.\n\n"
         "**Rule of thumb:** Suspicious rate > 5% in any single hour = tighten controls."
+    )
+    st.markdown("---")
+    st.markdown("### How z10 and z20 are calculated")
+    st.markdown(
+        "At every 5-minute Polymarket settlement second, the detector measures: "
+        "how unusual was the price move *right now* compared to the recent calm?"
+    )
+    st.latex(r"""
+        z_{10} = \frac{\left| r_{\text{fix}} - \mu_{10s} \right|}{\sigma_{10s}}
+        \qquad
+        z_{20} = \frac{\left| r_{\text{fix}} - \mu_{20s} \right|}{\sigma_{20s}}
+    """)
+    st.markdown(
+        "Where:\n"
+        "- $r_{\\text{fix}}$ = the 1-second log return at the exact fix second (in basis points)\n"
+        "- $\\mu_{10s}$ = average 1-second return over the **prior 10 seconds**\n"
+        "- $\\sigma_{10s}$ = standard deviation of 1-second returns over the **prior 10 seconds**\n"
+        "- $z_{20}$ = same formula but using the **prior 20 seconds** as baseline\n"
+        "- **zmax** = the larger of z10 and z20 — the strongest signal wins\n\n"
+        "A z-score of 4 means the move was 4 standard deviations from normal. "
+        "That happens by chance less than 0.003% of the time in a normal distribution. "
+        "A threshold of z \u2265 4 is therefore a very conservative filter."
+    )
+    st.markdown("**Worked example from your data (row 109, 2026-04-08 06:00 SGT):**")
+    st.markdown(
+        "| | Value |\n"
+        "|---|---|\n"
+        "| Fix-second move | **+16.2 bp** (~$14 on BTC) |\n"
+        "| Prior 10s average move | ~0.0 bp (flat) |\n"
+        "| Prior 10s std deviation | ~0.01 bp (completely still) |\n"
+        "| **z10** | **(16.2 - 0) / 0.01 = 1620** |\n"
+        "| Prior 20s std deviation | ~0.35 bp (slightly more active) |\n"
+        "| **z20** | **46.5** |\n"
+        "| **zmax** | **1620** (z10 dominates) |\n"
+        "| Reversal within 2s? | Yes |\n"
+        "| **Verdict** | **Suspicious** \u2014 large move out of complete stillness, immediately reversed |"
+    )
+    st.markdown(
+        "The key insight: BTC was **completely flat** for 10 seconds, then moved sharply at "
+        "the exact settlement second, then snapped back. That is the classic manipulation pattern."
     )
     st.markdown(STYLE_LEGEND)
 
@@ -327,21 +368,22 @@ with tabs[2]:
 
         st.markdown(
             """
-            **Key finding — 10-second view:**
-            - **Q1 (Lowest 10s volatility):** suspicious rate = **5.54%**
+            **Key finding — T-6 decision-time view:**
+            - **Q1 (Lowest 10s volatility at T-6):** suspicious rate = 3.53%
             - **Q2 (Med-Low):** suspicious rate = 3.54%
-            - **Q3 (Med-High):** suspicious rate = 3.03%
+            - **Q3 (Med-High):** suspicious rate = **5.05%**
             - **Q4 (Highest 10s volatility):** suspicious rate = **1.52%**
 
-            **Interpretation:** At the settlement microstructure level, your thesis holds better.
-            Manipulation-style behavior is most common when immediate 10-second volatility is low,
-            and falls as 10-second volatility rises.
+            **Interpretation:** At T-6, risk is not strictly monotonic with volatility.
+            Very high volatility remains safer, while both ultra-low and mid-high pre-fix
+            regimes can show elevated suspicious incidence.
 
-            **Practical implication:** Use low 10-second volatility as a hardening trigger around fix time.
+            **Practical implication:** Treat T-6 volatility as a regime classifier, not a single
+            low-vol-only trigger.
             """
         )
     else:
-        st.warning("Run the enrichment analysis to generate fix_volatility_10s_quartile_summary.csv")
+        st.warning("Run recalc_t6_thresholds.py to generate fix_volatility_10s_t6_quartile_summary.csv")
 
     st.markdown("---")
     st.subheader("Fine-Grain View: Suspicious Rate by Volatility Decile")
@@ -364,8 +406,8 @@ with tabs[2]:
         st.caption(STYLE_LEGEND)
         st.dataframe(style_risk_table(dt), use_container_width=True)
         st.markdown(
-            "In the 10-second view, the top suspicious deciles are concentrated in the quietest ranges, "
-            "while the highest-volatility deciles show lower suspicious rates."
+            "In the T-6 decision-time view, elevated suspicious rates appear in transitional mid-high "
+            "volatility deciles, while the highest-volatility deciles remain lower risk."
         )
     else:
         st.warning("Run the enrichment analysis to generate fix_volatility_10s_decile_summary.csv")
